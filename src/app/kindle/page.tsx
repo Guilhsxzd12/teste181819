@@ -1,13 +1,14 @@
 import { AppShell } from "@/components/AppShell";
-import { KindleClient } from "@/components/KindleClient";
-import { requireApproved } from "@/lib/auth";
-import type { Category,UserBook } from "@/lib/types";
+import { BookCard } from "@/components/BookCard";
+import { createServerSupabaseClient } from "@/lib/supabase/server";
+import type { Book } from "@/lib/types";
 
 export default async function KindlePage(){
-  const {supabase}=await requireApproved();
-  const [{data:categories},{data:books}]=await Promise.all([
-    supabase.from("categories").select("*").order("name"),
-    supabase.from("user_books").select("*,categories(name)").order("created_at",{ascending:false})
-  ]);
-  return <AppShell><main className="container"><div className="page-head"><div><h1>Enviar ao Kindle</h1><p>Valide seu EPUB, salve uma cópia privada e compartilhe o arquivo diretamente com o app Kindle pelo menu do celular.</p></div></div><KindleClient categories={(categories||[]) as Category[]} initialBooks={(books||[]) as UserBook[]}/></main></AppShell>;
+  const supabase=await createServerSupabaseClient();
+  const {data}=await supabase.from("books").select("*,categories(name)").eq("published",true).order("title");
+  const books=(data||[]) as Book[];
+  return <AppShell><main className="container">
+    <div className="page-head"><div><span className="eyebrow">KINDLE BOOK</span><h1>Enviar ao Kindle</h1><p>Escolha um livro e, na página dele, toque em “Enviar ao Kindle”. Você poderá compartilhar o arquivo com o aplicativo Kindle.</p></div></div>
+    {books.length?<div className="book-grid">{books.map(book=><BookCard key={book.id} book={book}/>)}</div>:<div className="empty-state"><h3>Nenhum livro disponível</h3><p>Os livros publicados aparecerão aqui.</p></div>}
+  </main></AppShell>;
 }

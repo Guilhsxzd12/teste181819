@@ -96,8 +96,8 @@ export function KindleShareButton({id,title,source="user"}:{id:string;title:stri
         <div className="cover-picker-head"><div><strong>Escolha a capa do Kindle</strong><p>A capa selecionada será incorporada ao EPUB e enviada junto com o livro.</p></div><button type="button" className="icon-close" onClick={()=>setPicker(false)} aria-label="Fechar">×</button></div>
         {!!covers.length&&<div className="cover-choice-grid">{covers.map((cover,index)=><button type="button" className={`cover-choice ${cover.isDefault?"default":""}`} key={`${cover.url}-${index}`} onClick={()=>prepareFile(cover.url)} disabled={busy}><img src={cover.url} alt={cover.label}/><span>{cover.isDefault?"Capa atual":cover.label}</span></button>)}</div>}
         <div className="stack" style={{marginTop:16}}>
-          <button className="btn secondary" type="button" disabled={busy} onClick={()=>coverInput.current?.click()}>🖼 Enviar outra capa</button>
-          <input ref={coverInput} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={e=>{const file=e.target.files?.[0];if(file)void uploadCustomCover(file);}}/>
+          {source==="user"&&<><button className="btn secondary" type="button" disabled={busy} onClick={()=>coverInput.current?.click()}>🖼 Enviar outra capa</button>
+          <input ref={coverInput} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={e=>{const file=e.target.files?.[0];if(file)void uploadCustomCover(file);}}/></>}
           {!covers.length&&<p className="muted">Este livro ainda não possui capa cadastrada. Envie uma imagem para continuar.</p>}
         </div>
         {busy&&<div className="notice">Gerando o EPUB com a capa escolhida...</div>}
