@@ -1,14 +1,13 @@
 import { NextRequest,NextResponse } from "next/server";
-import { getApiViewer } from "@/lib/auth";
+import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { fetchDriveFile } from "@/lib/google-drive";
 
 function isPdf(name:string,mime:string){return mime==="application/pdf"||name.toLowerCase().endsWith(".pdf");}
 
 export async function GET(request:NextRequest,context:{params:Promise<{id:string}>}){
-  const v=await getApiViewer();
-  if(!v.user||!v.profile||(!v.profile.approved&&v.profile.role!=="admin"))return NextResponse.json({error:"Acesso negado."},{status:403});
   const {id}=await context.params;
-  const {data:book}=await v.supabase.from("books").select("drive_file_id,file_name,mime_type,reading_pdf_drive_file_id,reading_pdf_file_name,allow_download").eq("id",id).maybeSingle();
+  const supabase=await createServerSupabaseClient();
+  const {data:book}=await supabase.from("books").select("drive_file_id,file_name,mime_type,reading_pdf_drive_file_id,reading_pdf_file_name,allow_download").eq("id",id).eq("published",true).maybeSingle();
   if(!book)return NextResponse.json({error:"Livro não encontrado."},{status:404});
 
   const wantsDownload=request.nextUrl.searchParams.get("download")==="1";
@@ -31,7 +30,7 @@ export async function GET(request:NextRequest,context:{params:Promise<{id:string
     ["content-type","content-length","content-range","accept-ranges","etag"].forEach(n=>{const x=dr.headers.get(n);if(x)h.set(n,x);});
     h.set("content-type",mimeType||h.get("content-type")||"application/octet-stream");
     h.set("content-disposition",`${wantsDownload?"attachment":"inline"}; filename="${encodeURIComponent(fileName)}"`);
-    h.set("cache-control","private, no-store");
+    h.set("cache-control","public, max-age=300");
     return new NextResponse(dr.body,{status:dr.status,headers:h});
   }catch(e){
     return NextResponse.json({error:e instanceof Error?e.message:"Erro ao abrir livro."},{status:502});
