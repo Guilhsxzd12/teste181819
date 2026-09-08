@@ -1,7 +1,7 @@
 import "server-only";
 import { createClient } from "@supabase/supabase-js";
 
-let cachedAdminClient: ReturnType<typeof createClient> | null = null;
+let cachedAdminClient: any = null;
 
 export function createAdminSupabaseClient() {
   if (cachedAdminClient) return cachedAdminClient;
