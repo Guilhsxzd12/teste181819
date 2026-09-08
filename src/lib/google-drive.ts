@@ -3,6 +3,14 @@ import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 
 const DRIVE_SCOPE="https://www.googleapis.com/auth/drive";
 const DEFAULT_SITE_ORIGIN="https://biblioteca-virtual-umber.vercel.app";
+const TOKEN_EARLY_REFRESH_MS=60_000;
+const FOLDER_CACHE_MS=5*60_000;
+
+type AccessTokenCache={token:string;expiresAt:number};
+type FolderCacheEntry={id:string;expiresAt:number};
+let accessTokenCache:AccessTokenCache|null=null;
+let accessTokenPromise:Promise<string>|null=null;
+const folderCache=new Map<string,FolderCacheEntry>();
 
 function googleConfig(){
   const clientId=process.env.GOOGLE_CLIENT_ID?.trim();
@@ -10,6 +18,13 @@ function googleConfig(){
   if(!clientId||!clientSecret)throw new Error("Google OAuth não configurado.");
   return {clientId,clientSecret};
 }
+
+function setAccessToken(token:string,expiresIn=3600){
+  accessTokenCache={token,expiresAt:Date.now()+Math.max(60,expiresIn)*1000};
+}
+function clearDriveRuntimeCache(){accessTokenCache=null;accessTokenPromise=null;folderCache.clear();}
+function getCachedFolder(key:string){const cached=folderCache.get(key);if(cached&&cached.expiresAt>Date.now())return cached.id;if(cached)folderCache.delete(key);return null;}
+function setCachedFolder(key:string,id:string){folderCache.set(key,{id,expiresAt:Date.now()+FOLDER_CACHE_MS});return id;}
 
 export function getSiteOrigin(fallback?:string){return (process.env.NEXT_PUBLIC_SITE_URL?.trim()||DEFAULT_SITE_ORIGIN||fallback||"").replace(/\/$/,"");}
 
@@ -23,7 +38,10 @@ export async function exchangeGoogleCode(code:string,_origin:string){
   const {clientId,clientSecret}=googleConfig();const origin=getSiteOrigin(_origin);
   const response=await fetch("https://oauth2.googleapis.com/token",{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded"},body:new URLSearchParams({code,client_id:clientId,client_secret:clientSecret,redirect_uri:`${origin}/api/drive/oauth/callback`,grant_type:"authorization_code"}),cache:"no-store"});
   if(!response.ok){const text=await response.text();throw new Error(`Falha ao conectar Google Drive (${response.status}): ${text.slice(0,160)}`);}
-  return response.json() as Promise<{access_token:string;refresh_token?:string;expires_in:number;scope:string;token_type:string;id_token?:string}>;
+  const json=await response.json() as {access_token:string;refresh_token?:string;expires_in:number;scope:string;token_type:string;id_token?:string};
+  clearDriveRuntimeCache();
+  if(json.access_token)setAccessToken(json.access_token,json.expires_in||3600);
+  return json;
 }
 
 async function readRefreshToken(){
@@ -36,10 +54,18 @@ async function readRefreshToken(){
 }
 
 export async function getGoogleAccessToken(){
-  const refreshToken=await readRefreshToken();const {clientId,clientSecret}=googleConfig();
-  const response=await fetch("https://oauth2.googleapis.com/token",{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded"},body:new URLSearchParams({client_id:clientId,client_secret:clientSecret,refresh_token:refreshToken,grant_type:"refresh_token"}),cache:"no-store"});
-  if(!response.ok){const text=await response.text();console.error("[drive] refresh token recusado",{status:response.status,body:text.slice(0,180)});throw new Error(`Não foi possível renovar o acesso ao Drive (${response.status}).`);}
-  const json=await response.json() as {access_token?:string};if(!json.access_token)throw new Error("Google não retornou access token.");return json.access_token;
+  if(accessTokenCache&&accessTokenCache.expiresAt-Date.now()>TOKEN_EARLY_REFRESH_MS)return accessTokenCache.token;
+  if(accessTokenPromise)return accessTokenPromise;
+
+  accessTokenPromise=(async()=>{
+    const refreshToken=await readRefreshToken();const {clientId,clientSecret}=googleConfig();
+    const response=await fetch("https://oauth2.googleapis.com/token",{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded"},body:new URLSearchParams({client_id:clientId,client_secret:clientSecret,refresh_token:refreshToken,grant_type:"refresh_token"}),cache:"no-store"});
+    if(!response.ok){const text=await response.text();console.error("[drive] refresh token recusado",{status:response.status,body:text.slice(0,180)});accessTokenCache=null;throw new Error(`Não foi possível renovar o acesso ao Drive (${response.status}).`);}
+    const json=await response.json() as {access_token?:string;expires_in?:number};if(!json.access_token)throw new Error("Google não retornou access token.");
+    setAccessToken(json.access_token,json.expires_in||3600);return json.access_token;
+  })();
+
+  try{return await accessTokenPromise;}finally{accessTokenPromise=null;}
 }
 
 async function driveJson<T>(token:string,url:string,init?:RequestInit){const response=await fetch(url,{...init,headers:{authorization:`Bearer ${token}`,...(init?.headers||{})},cache:"no-store"});if(!response.ok){const text=await response.text();throw new Error(`Google Drive ${response.status}: ${text.slice(0,300)}`);}return response.json() as Promise<T>;}
@@ -47,14 +73,16 @@ function esc(v:string){return v.replace(/\\/g,"\\\\").replace(/'/g,"\\'");}
 function safeFileName(v:string){return v.normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-zA-Z0-9._-]+/g,"-").replace(/-+/g,"-").replace(/^-|-$/g,"")||"arquivo";}
 
 async function findOrCreateChildFolder(token:string,name:string,parentId:string){
-  const q=encodeURIComponent(`name='${esc(name)}' and '${esc(parentId)}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`);const result=await driveJson<{files:{id:string}[]}>(token,`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)&pageSize=10`);if(result.files?.[0]?.id)return result.files[0].id;
-  const created=await driveJson<{id:string}>(token,"https://www.googleapis.com/drive/v3/files?fields=id",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({name,mimeType:"application/vnd.google-apps.folder",parents:[parentId]})});return created.id;
+  const cacheKey=`child:${parentId}:${name}`;const cached=getCachedFolder(cacheKey);if(cached)return cached;
+  const q=encodeURIComponent(`name='${esc(name)}' and '${esc(parentId)}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`);const result=await driveJson<{files:{id:string}[]}>(token,`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)&pageSize=10`);if(result.files?.[0]?.id)return setCachedFolder(cacheKey,result.files[0].id);
+  const created=await driveJson<{id:string}>(token,"https://www.googleapis.com/drive/v3/files?fields=id",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({name,mimeType:"application/vnd.google-apps.folder",parents:[parentId]})});return setCachedFolder(cacheKey,created.id);
 }
 
 export async function findOrCreateRootFolder(token:string){
   const configured=process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID?.trim();if(configured)return configured;
-  const q=encodeURIComponent("name='KINDLE BOOK' and mimeType='application/vnd.google-apps.folder' and trashed=false");const result=await driveJson<{files:{id:string}[]}>(token,`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id)&pageSize=10`);if(result.files?.[0]?.id)return result.files[0].id;
-  const created=await driveJson<{id:string}>(token,"https://www.googleapis.com/drive/v3/files?fields=id",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({name:"KINDLE BOOK",mimeType:"application/vnd.google-apps.folder"})});return created.id;
+  const cached=getCachedFolder("root");if(cached)return cached;
+  const q=encodeURIComponent("name='KINDLE BOOK' and mimeType='application/vnd.google-apps.folder' and trashed=false");const result=await driveJson<{files:{id:string}[]}>(token,`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id)&pageSize=10`);if(result.files?.[0]?.id)return setCachedFolder("root",result.files[0].id);
+  const created=await driveJson<{id:string}>(token,"https://www.googleapis.com/drive/v3/files?fields=id",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({name:"KINDLE BOOK",mimeType:"application/vnd.google-apps.folder"})});return setCachedFolder("root",created.id);
 }
 
 export async function findOrCreateLetterFolder(token:string,letter:string){const root=await findOrCreateRootFolder(token);const safe=/^[A-Z]$/.test(letter)?letter:"#";return findOrCreateChildFolder(token,safe,root);}
