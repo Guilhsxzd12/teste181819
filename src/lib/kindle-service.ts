@@ -30,15 +30,14 @@ export async function ensureKindleVersion(supabase:SupabaseClient,userId:string,
 
   const isEpub=item.mime_type==="application/epub+zip"||item.file_name.toLowerCase().endsWith(".epub");
   if(!isEpub)throw new Error("Este livro precisa ter um EPUB original para ser enviado ao Kindle.");
-  if(!item.cover_url)throw new Error("Adicione uma capa ao livro antes de enviar ao Kindle.");
 
   const epubResponse=await fetchDriveFile(item.drive_file_id);
   const epubBytes=new Uint8Array(await epubResponse.arrayBuffer());
-  const coveredBytes=await replaceEpubCover(epubBytes,item.cover_url);
+  const outputBytes=item.cover_url?await replaceEpubCover(epubBytes,item.cover_url):epubBytes;
   const fileName=`${slugifyTitle(item.title)}-Kindle.epub`;
   const uploaded=source==="user"
-    ?await uploadUserKindleEpub(userId,fileName,coveredBytes)
-    :await uploadCatalogKindleEpub((item.drive_folder_letter||driveLetter(item.title)).toUpperCase(),fileName,coveredBytes);
+    ?await uploadUserKindleEpub(userId,fileName,outputBytes)
+    :await uploadCatalogKindleEpub((item.drive_folder_letter||driveLetter(item.title)).toUpperCase(),fileName,outputBytes);
   const patch={kindle_drive_file_id:uploaded.id,kindle_file_name:fileName,kindle_generated_at:new Date().toISOString()};
   const admin=createAdminSupabaseClient();
   const {error}=await admin.from(source==="user"?"user_books":"books").update(patch).eq("id",item.id);
@@ -70,7 +69,7 @@ export async function prepareKindleBytes(supabase:SupabaseClient,userId:string,s
   const ensured=await ensureKindleVersion(supabase,userId,source,id);
   const epubResponse=await fetchDriveFile(ensured.driveFileId);
   const baseBytes=new Uint8Array(await epubResponse.arrayBuffer());
-  const selected=coverUrl?.trim()||ensured.item.cover_url||null;
+  const selected=coverUrl?.trim()||null;
   if(!selected||selected===ensured.item.cover_url)return {bytes:baseBytes,fileName:ensured.fileName,title:ensured.item.title};
   const bytes=await replaceEpubCover(baseBytes,selected);
   return {bytes,fileName:ensured.fileName,title:ensured.item.title};
