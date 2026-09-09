@@ -9,6 +9,8 @@ export const dynamic="force-dynamic";
 
 const BOOK_SELECT="*,categories(name),book_categories(category_id,is_primary,source,confidence,categories(id,name,slug,parent_id,sort_order))";
 const PAGE_SIZE=1000;
+const MIN_SUBCATEGORY_BOOKS=4;
+const shelfStyle={display:"grid",gridAutoFlow:"column",gridAutoColumns:"minmax(155px,195px)",gridTemplateColumns:"none",overflowX:"auto",overflowY:"hidden",gap:24,paddingBottom:14,scrollSnapType:"x proximity",WebkitOverflowScrolling:"touch",overscrollBehaviorX:"contain"} as const;
 
 function norm(v:string){return v.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();}
 function matches(q:string,title:string,author:string){if(!q)return true;const n=norm(q);return norm(title).includes(n)||norm(author||"").includes(n);}
@@ -57,9 +59,18 @@ export default async function LibraryPage({searchParams}:{searchParams:Promise<{
   const featured=all.filter(b=>b.cover_url).slice(0,4);
   const topLevelCategories=categories.filter(c=>!c.parent_id);
   const visibleCategories=topLevelCategories.filter(c=>regularAll.some(b=>inCategory(b,c.id)));
-  const visibleChildren=childCategories.map(c=>({category:c,items:regularBooks.filter(b=>inCategory(b,c.id))})).filter(group=>group.items.length>0);
-  const childBookIds=new Set(visibleChildren.flatMap(group=>group.items.map(book=>book.id)));
-  const parentOnlyBooks=selectedCategory&&visibleChildren.length?regularBooks.filter(book=>!childBookIds.has(book.id)):[];
+
+  const qualifiedChildren=childCategories
+    .filter(c=>norm(c.name)!=="outros")
+    .map(c=>({id:c.id,name:c.name,slug:c.slug,items:regularBooks.filter(b=>inCategory(b,c.id))}))
+    .filter(group=>group.items.length>=MIN_SUBCATEGORY_BOOKS);
+  const categorizedInVisibleChildren=new Set(qualifiedChildren.flatMap(group=>group.items.map(book=>book.id)));
+  const otherCategory=childCategories.find(c=>norm(c.name)==="outros")||null;
+  const otherItems=selectedCategory&&childCategories.length>0?regularBooks.filter(book=>!categorizedInVisibleChildren.has(book.id)):[];
+  const visibleChildren=[
+    ...qualifiedChildren,
+    ...(otherItems.length?[{id:otherCategory?.id||`outros-${selectedCategory?.id||"categoria"}`,name:"Outros",slug:otherCategory?.slug||"",items:otherItems}]:[])
+  ];
 
   const groupedLanguages=new Map<string,Book[]>();
   for(const book of otherLanguageBooks){
@@ -84,18 +95,17 @@ export default async function LibraryPage({searchParams}:{searchParams:Promise<{
         {!query&&!selectedCategory&&<div className="section-heading"><div><span className="eyebrow">ACERVO</span><h2>Biblioteca</h2><p>Livros publicados e organizados por categorias compatíveis com cada obra.</p></div><span className="collection-count">{totalBooks} livro{totalBooks===1?"":"s"}</span></div>}
 
         {base.length?<div className="category-sections">
-          {selectedCategory&&visibleChildren.length>0&&<>
-            {visibleChildren.map(({category:c,items})=>{const shown=items.slice(0,10);return <section className="category-block" id={`categoria-${c.slug}`} key={c.id}><div className="category-title"><div><span className="eyebrow">SUBCATEGORIA</span><h3>{c.name}</h3><span>{items.length} {items.length===1?"título":"títulos"}</span></div>{items.length>10?<Link className="category-see-all" href={`/biblioteca?category=${encodeURIComponent(c.slug)}`}>Ver todos →</Link>:<span className="category-line"/>}</div><div className="book-grid shelf-grid">{shown.map(b=><BookCard key={`${c.id}-${b.id}`} book={b}/>)}</div></section>;})}
-            {!!parentOnlyBooks.length&&<section className="category-block"><div className="category-title"><div><span className="eyebrow">MAIS DA COLEÇÃO</span><h3>Outros em {selectedCategory.name}</h3><span>{parentOnlyBooks.length} {parentOnlyBooks.length===1?"título":"títulos"}</span></div><span className="category-line"/></div><div className="book-grid shelf-grid">{parentOnlyBooks.slice(0,20).map(b=><BookCard key={b.id} book={b}/>)}</div></section>}
+          {selectedCategory&&childCategories.length>0&&visibleChildren.length>0&&<>
+            {visibleChildren.map(({id,name,slug,items})=>{const shown=items.slice(0,10);return <section className="category-block" id={`categoria-${slug||id}`} key={id}><div className="category-title"><div><span className="eyebrow">SUBCATEGORIA</span><h3>{name}</h3><span>{items.length} {items.length===1?"título":"títulos"}</span></div>{slug&&items.length>10?<Link className="category-see-all" href={`/biblioteca?category=${encodeURIComponent(slug)}`}>Ver todos →</Link>:<span className="category-line"/>}</div><div className="book-grid shelf-grid" style={shelfStyle}>{shown.map(b=><BookCard key={`${id}-${b.id}`} book={b}/>)}</div></section>;})}
           </>}
 
-          {selectedCategory&&visibleChildren.length===0&&<section className="category-block" id={`categoria-${selectedCategory.slug}`}><div className="category-title"><div><h3>{selectedCategory.name}</h3><span>{regularBooks.length} {regularBooks.length===1?"título":"títulos"}</span></div><span className="category-line"/></div><div className="book-grid shelf-grid">{regularBooks.map(b=><BookCard key={b.id} book={b}/>)}</div></section>}
+          {selectedCategory&&childCategories.length===0&&<section className="category-block" id={`categoria-${selectedCategory.slug}`}><div className="category-title"><div><h3>{selectedCategory.name}</h3><span>{regularBooks.length} {regularBooks.length===1?"título":"títulos"}</span></div><span className="category-line"/></div><div className="book-grid shelf-grid" style={shelfStyle}>{regularBooks.map(b=><BookCard key={b.id} book={b}/>)}</div></section>}
 
-          {!selectedCategory&&visibleCategories.map(c=>{const items=regularBooks.filter(b=>inCategory(b,c.id));if(!items.length)return null;const shown=query?items:items.slice(0,10);return <section className="category-block" id={`categoria-${c.slug}`} key={c.id}><div className="category-title"><div><span className="eyebrow">COLEÇÃO</span><h3>{c.name}</h3><span>{items.length} {items.length===1?"título":"títulos"}</span></div>{!query&&items.length>10?<Link className="category-see-all" href={`/biblioteca?category=${encodeURIComponent(c.slug)}`}>Ver todos →</Link>:<span className="category-line"/>}</div><div className="book-grid shelf-grid">{shown.map(b=><BookCard key={`${c.id}-${b.id}`} book={b}/>)}</div></section>;})}
+          {!selectedCategory&&visibleCategories.map(c=>{const items=regularBooks.filter(b=>inCategory(b,c.id));if(!items.length)return null;const shown=query?items:items.slice(0,10);return <section className="category-block" id={`categoria-${c.slug}`} key={c.id}><div className="category-title"><div><span className="eyebrow">COLEÇÃO</span><h3>{c.name}</h3><span>{items.length} {items.length===1?"título":"títulos"}</span></div>{!query&&items.length>10?<Link className="category-see-all" href={`/biblioteca?category=${encodeURIComponent(c.slug)}`}>Ver todos →</Link>:<span className="category-line"/>}</div><div className="book-grid shelf-grid" style={shelfStyle}>{shown.map(b=><BookCard key={`${c.id}-${b.id}`} book={b}/>)}</div></section>;})}
 
-          {!selectedCategory&&!!uncategorized.length&&<section className="category-block"><div className="category-title"><div><h3>Outros</h3><span>{uncategorized.length} {uncategorized.length===1?"título":"títulos"}</span></div><span className="category-line"/></div><div className="book-grid shelf-grid">{(query?uncategorized:uncategorized.slice(0,10)).map(b=><BookCard key={b.id} book={b}/>)}</div></section>}
+          {!selectedCategory&&!!uncategorized.length&&<section className="category-block"><div className="category-title"><div><h3>Outros</h3><span>{uncategorized.length} {uncategorized.length===1?"título":"títulos"}</span></div><span className="category-line"/></div><div className="book-grid shelf-grid" style={shelfStyle}>{(query?uncategorized:uncategorized.slice(0,10)).map(b=><BookCard key={b.id} book={b}/>)}</div></section>}
 
-          {!selectedCategory&&!!languageGroups.length&&<section className="category-block" id="outros-idiomas"><div className="category-title"><div><h3>Outros idiomas</h3><span>{otherLanguageBooks.length} {otherLanguageBooks.length===1?"título":"títulos"}</span></div><span className="category-line"/></div><div style={{display:"grid",gap:40}}>{languageGroups.map(group=><section className="category-block" id={`idioma-${group.slug}`} key={group.code}><div className="category-title"><div><h3>{group.label}</h3><span>{group.items.length} {group.items.length===1?"título":"títulos"}</span></div><span className="category-line"/></div><div className="book-grid shelf-grid">{(query?group.items:group.items.slice(0,10)).map(b=><BookCard key={b.id} book={b}/>)}</div></section>)}</div></section>}
+          {!selectedCategory&&!!languageGroups.length&&<section className="category-block" id="outros-idiomas"><div className="category-title"><div><h3>Outros idiomas</h3><span>{otherLanguageBooks.length} {otherLanguageBooks.length===1?"título":"títulos"}</span></div><span className="category-line"/></div><div style={{display:"grid",gap:40}}>{languageGroups.map(group=><section className="category-block" id={`idioma-${group.slug}`} key={group.code}><div className="category-title"><div><h3>{group.label}</h3><span>{group.items.length} {group.items.length===1?"título":"títulos"}</span></div><span className="category-line"/></div><div className="book-grid shelf-grid" style={shelfStyle}>{(query?group.items:group.items.slice(0,10)).map(b=><BookCard key={b.id} book={b}/>)}</div></section>)}</div></section>}
         </div>:<div className="empty-state"><h3>{query?"Nenhum livro corresponde à busca":"Nenhum livro nesta categoria"}</h3><p>{query?"Tente pesquisar com menos palavras.":"Ainda não há títulos publicados aqui."}</p></div>}
       </section>
     </div>
