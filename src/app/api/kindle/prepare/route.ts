@@ -31,7 +31,7 @@ export async function POST(request:NextRequest){
 
       const driveResponse=await fetchDriveFile(String(file.drive_file_id));
       let bytes=new Uint8Array(await driveResponse.arrayBuffer());
-      if(coverUrl)bytes=await replaceEpubCover(bytes,coverUrl);
+      if(coverUrl)bytes=new Uint8Array(await replaceEpubCover(bytes,coverUrl));
       const arrayBuffer=bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength) as ArrayBuffer;
       const blob=new Blob([arrayBuffer],{type:"application/epub+zip"});
       const fileName=String(file.file_name||`${book.title}.epub`).replace(/\.[^.]+$/,".epub");
