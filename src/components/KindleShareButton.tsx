@@ -17,17 +17,17 @@ export function KindleShareButton({id,title,source="user"}:{id:string;title:stri
   const [preparedFile,setPreparedFile]=useState<File|null>(null);
   const coverInput=useRef<HTMLInputElement|null>(null);
 
-  async function prepareFile(coverUrl:string){
+  async function prepareFile(coverUrl?:string|null){
     setBusy(true);setMessage("");setPreparedFile(null);
     try{
-      const response=await fetch("/api/kindle/prepare",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({source,id,coverUrl})});
+      const response=await fetch("/api/kindle/prepare",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({source,id,coverUrl:coverUrl||undefined})});
       if(!response.ok){const data=await response.json().catch(()=>({}));throw new Error(data.error||"Não foi possível preparar a versão Kindle.");}
       const blob=await response.blob();
       const fileName=fileNameFromHeader(response.headers.get("content-disposition"),title);
       const file=new File([blob],fileName,{type:"application/epub+zip"});
       setPreparedFile(file);
       setPicker(false);
-      setMessage("EPUB pronto com a capa escolhida. Toque em “Compartilhar com Kindle”.");
+      setMessage(coverUrl?"EPUB pronto com a capa escolhida. Toque em “Compartilhar com Kindle”.":"EPUB pronto com a capa original. Toque em “Compartilhar com Kindle”.");
     }catch(error){
       setMessage(error instanceof Error?error.message:"Não foi possível preparar o livro.");
     }finally{setBusy(false);}
@@ -73,34 +73,38 @@ export function KindleShareButton({id,title,source="user"}:{id:string;title:stri
     }
   }
 
-  async function start(){
-    setBusy(true);setMessage("");setPreparedFile(null);
+  async function openCoverPicker(){
+    setBusy(true);setMessage("");
     try{
       const response=await fetch(`/api/kindle/covers?source=${source}&id=${encodeURIComponent(id)}`);
       const data=await response.json();
       if(!response.ok)throw new Error(data.error||"Não foi possível carregar as capas.");
       setCovers((data.covers||[]) as CoverChoice[]);
       setPicker(true);
-    }catch(error){setMessage(error instanceof Error?error.message:"Não foi possível preparar o Kindle.");}
+    }catch(error){setMessage(error instanceof Error?error.message:"Não foi possível carregar as capas.");}
     finally{setBusy(false);}
   }
 
   return <>
-    {preparedFile?
-      <button className="btn kindle-share-btn" type="button" onClick={sharePrepared}>Compartilhar com Kindle</button>:
-      <button className="btn kindle-share-btn" type="button" onClick={start} disabled={busy}>{busy?"Carregando capas...":"Enviar ao Kindle"}</button>
-    }
+    <div className="row wrap">
+      {preparedFile?
+        <button className="btn kindle-share-btn" type="button" onClick={sharePrepared}>Compartilhar com Kindle</button>:
+        <button className="btn kindle-share-btn" type="button" onClick={()=>void prepareFile(null)} disabled={busy}>{busy?"Preparando...":"Enviar ao Kindle"}</button>
+      }
+      {!preparedFile&&<button className="btn secondary" type="button" onClick={openCoverPicker} disabled={busy}>Escolher capa</button>}
+    </div>
     {message&&<div className="mini-message">{message}</div>}
     {picker&&<div className="cover-picker-backdrop" role="presentation" onClick={()=>!busy&&setPicker(false)}>
       <div className="cover-picker card" role="dialog" aria-modal="true" aria-label="Escolher capa do Kindle" onClick={e=>e.stopPropagation()}>
-        <div className="cover-picker-head"><div><strong>Escolha a capa do Kindle</strong><p>A capa selecionada será incorporada ao EPUB e enviada junto com o livro.</p></div><button type="button" className="icon-close" onClick={()=>setPicker(false)} aria-label="Fechar">×</button></div>
-        {!!covers.length&&<div className="cover-choice-grid">{covers.map((cover,index)=><button type="button" className={`cover-choice ${cover.isDefault?"default":""}`} key={`${cover.url}-${index}`} onClick={()=>prepareFile(cover.url)} disabled={busy}><img src={cover.url} alt={cover.label}/><span>{cover.isDefault?"Capa atual":cover.label}</span></button>)}</div>}
+        <div className="cover-picker-head"><div><strong>Escolha uma capa, se quiser</strong><p>Esta etapa é opcional. Sem alteração, o EPUB mantém a capa original.</p></div><button type="button" className="icon-close" onClick={()=>setPicker(false)} aria-label="Fechar">×</button></div>
+        <button className="btn secondary" type="button" disabled={busy} onClick={()=>void prepareFile(null)}>Manter capa original</button>
+        {!!covers.length&&<div className="cover-choice-grid" style={{marginTop:14}}>{covers.map((cover,index)=><button type="button" className={`cover-choice ${cover.isDefault?"default":""}`} key={`${cover.url}-${index}`} onClick={()=>prepareFile(cover.url)} disabled={busy}><img src={cover.url} alt={cover.label}/><span>{cover.isDefault?"Capa atual":cover.label}</span></button>)}</div>}
         <div className="stack" style={{marginTop:16}}>
-          {source==="user"&&<><button className="btn secondary" type="button" disabled={busy} onClick={()=>coverInput.current?.click()}>🖼 Enviar outra capa</button>
-          <input ref={coverInput} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={e=>{const file=e.target.files?.[0];if(file)void uploadCustomCover(file);}}/></>}
-          {!covers.length&&<p className="muted">Este livro ainda não possui capa cadastrada. Envie uma imagem para continuar.</p>}
+          <button className="btn secondary" type="button" disabled={busy} onClick={()=>coverInput.current?.click()}>🖼 Enviar outra capa</button>
+          <input ref={coverInput} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={e=>{const file=e.target.files?.[0];if(file)void uploadCustomCover(file);}}/>
+          {!covers.length&&<p className="muted">Ainda não há capas alternativas cadastradas. Você pode continuar com a original.</p>}
         </div>
-        {busy&&<div className="notice">Gerando o EPUB com a capa escolhida...</div>}
+        {busy&&<div className="notice">Preparando o EPUB...</div>}
       </div>
     </div>}
   </>;
