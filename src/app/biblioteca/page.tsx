@@ -7,25 +7,43 @@ import type { Book,Category } from "@/lib/types";
 
 export const dynamic="force-dynamic";
 
+const BOOK_SELECT="*,categories(name),book_categories(category_id,is_primary,source,confidence,categories(id,name,slug,parent_id,sort_order))";
+const PAGE_SIZE=1000;
+
 function norm(v:string){return v.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();}
 function matches(q:string,title:string,author:string){if(!q)return true;const n=norm(q);return norm(title).includes(n)||norm(author||"").includes(n);}
 function categoryIds(book:Book){const ids=(book.book_categories||[]).map(x=>x.category_id).filter(Boolean);if(book.category_id&&!ids.includes(book.category_id))ids.push(book.category_id);return ids;}
 function inCategory(book:Book,id:string){return categoryIds(book).includes(id);}
 function categoryOrder(a:Category,b:Category){return (a.sort_order??100)-(b.sort_order??100)||a.name.localeCompare(b.name,"pt-BR");}
 
+async function loadAllPublishedBooks(db:ReturnType<typeof createAdminSupabaseClient>,total:number){
+  if(total<=0)return [] as Book[];
+  const pages=Math.ceil(total/PAGE_SIZE);
+  const chunks=await Promise.all(Array.from({length:pages},(_,index)=>{
+    const from=index*PAGE_SIZE;
+    const to=from+PAGE_SIZE-1;
+    return db.from("books").select(BOOK_SELECT).eq("published",true).order("title",{ascending:true}).order("id",{ascending:true}).range(from,to);
+  }));
+  const failed=chunks.find(chunk=>chunk.error);
+  if(failed?.error)throw new Error(`Falha ao carregar o catálogo: ${failed.error.message}`);
+  return chunks.flatMap(chunk=>(chunk.data||[]) as Book[]);
+}
+
 export default async function LibraryPage({searchParams}:{searchParams:Promise<{q?:string;category?:string}>}){
-  // O catálogo é público, mas os arquivos continuam protegidos pelas rotas de leitura/download.
-  // A leitura server-side evita que uma sessão expirada faça todos os cards desaparecerem.
   const db=createAdminSupabaseClient();
   const {q="",category=""}=await searchParams;
   const query=q.trim();
-  const [{data:baseData},{data:categoryData},{count:publishedCount}]=await Promise.all([
-    db.from("books").select("*,categories(name),book_categories(category_id,is_primary,source,confidence,categories(id,name,slug,parent_id,sort_order))").eq("published",true).order("title"),
+
+  const [{data:categoryData,error:categoryError},{count:publishedCount,error:countError}]=await Promise.all([
     db.from("categories").select("*").order("sort_order").order("name"),
     db.from("books").select("id",{count:"exact",head:true}).eq("published",true)
   ]);
+  if(categoryError)throw new Error(`Falha ao carregar categorias: ${categoryError.message}`);
+  if(countError)throw new Error(`Falha ao contar livros: ${countError.message}`);
 
-  const all=((baseData||[]) as Book[]).filter(b=>matches(query,b.title,b.author));
+  const totalBooks=publishedCount??0;
+  const baseData=await loadAllPublishedBooks(db,totalBooks);
+  const all=baseData.filter(b=>matches(query,b.title,b.author));
   const categories=((categoryData||[]) as Category[]).sort(categoryOrder);
   const selectedCategory=category?categories.find(c=>c.slug===category)||null:null;
   const selectedParent=selectedCategory?.parent_id?categories.find(c=>c.id===selectedCategory.parent_id)||null:null;
@@ -37,7 +55,6 @@ export default async function LibraryPage({searchParams}:{searchParams:Promise<{
   const regularBooks=base.filter(b=>!b.language||isPortugueseLanguage(b.language));
   const uncategorized=regularBooks.filter(b=>categoryIds(b).length===0);
   const featured=all.filter(b=>b.cover_url).slice(0,4);
-  const totalBooks=publishedCount??all.length;
   const topLevelCategories=categories.filter(c=>!c.parent_id);
   const visibleCategories=topLevelCategories.filter(c=>regularAll.some(b=>inCategory(b,c.id)));
   const visibleChildren=childCategories.map(c=>({category:c,items:regularBooks.filter(b=>inCategory(b,c.id))})).filter(group=>group.items.length>0);
