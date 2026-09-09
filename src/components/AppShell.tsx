@@ -11,9 +11,10 @@ function Icon({name}:{name:"library"|"kindle"|"help"|"admin"|"search"}){
   return <svg {...common}><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>;
 }
 
+function TelegramIcon(){return <svg width="25" height="25" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M21.2 3.6 18 19.1c-.2 1.1-.9 1.4-1.8.9l-4.9-3.6-2.4 2.3c-.3.3-.5.5-1 .5l.4-5 9-8.1c.4-.4-.1-.6-.6-.2L5.6 12.8.8 11.3c-1-.3-1-1 .2-1.5L19.8 2.6c.9-.3 1.6.2 1.4 1Z" fill="currentColor"/></svg>}
+
 export async function AppShell({children}:{children:React.ReactNode}){
-  const {profile}=await getViewer();
-  const admin=profile?.role==="admin";
+  const {profile}=await getViewer();const admin=profile?.role==="admin";
   return <div className="app-shell">
     <header className="app-header"><div className="header-inner">
       <Link className="brand" href="/biblioteca"><span className="brand-mark">K</span><span className="brand-copy">KINDLE <b>BOOK</b></span></Link>
@@ -23,11 +24,9 @@ export async function AppShell({children}:{children:React.ReactNode}){
       {admin&&<div className="user-pill"><span>{profile?.full_name||profile?.email}</span><SignOutButton/></div>}
     </div></header>
     {children}
+    <a href="https://t.me/kindlebookadm" target="_blank" rel="noreferrer" aria-label="Falar com @kindlebookadm no Telegram" title="@kindlebookadm" style={{position:"fixed",right:20,bottom:84,zIndex:70,width:56,height:56,borderRadius:"50%",display:"grid",placeItems:"center",background:"#229ED9",color:"#fff",boxShadow:"0 12px 28px rgba(0,0,0,.2)"}}><TelegramIcon/></a>
     <nav className={`mobile-bottom-nav ${admin?"has-admin":"public-nav"}`} aria-label="Navegação principal">
-      <Link href="/biblioteca"><Icon name="library"/><span>Biblioteca</span></Link>
-      <Link href="/kindle"><Icon name="kindle"/><span>Enviar ao Kindle</span></Link>
-      <Link href="/ajuda"><Icon name="help"/><span>Ajuda</span></Link>
-      {admin&&<Link href="/admin"><Icon name="admin"/><span>Admin</span></Link>}
+      <Link href="/biblioteca"><Icon name="library"/><span>Biblioteca</span></Link><Link href="/kindle"><Icon name="kindle"/><span>Enviar ao Kindle</span></Link><Link href="/ajuda"><Icon name="help"/><span>Ajuda</span></Link>{admin&&<Link href="/admin"><Icon name="admin"/><span>Admin</span></Link>}
     </nav>
   </div>;
 }
