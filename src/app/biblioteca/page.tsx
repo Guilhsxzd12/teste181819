@@ -5,6 +5,8 @@ import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { isPortugueseLanguage,languageLabel,languageSlug,normalizeLanguage } from "@/lib/languages";
 import type { Book,Category } from "@/lib/types";
 
+export const dynamic="force-dynamic";
+
 function norm(v:string){return v.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();}
 function matches(q:string,title:string,author:string){if(!q)return true;const n=norm(q);return norm(title).includes(n)||norm(author||"").includes(n);}
 function categoryIds(book:Book){const ids=(book.book_categories||[]).map(x=>x.category_id).filter(Boolean);if(book.category_id&&!ids.includes(book.category_id))ids.push(book.category_id);return ids;}
