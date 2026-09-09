@@ -14,14 +14,14 @@ function Icon({name}:{name:"library"|"kindle"|"help"|"admin"|"search"}){
 function TelegramIcon(){return <svg width="25" height="25" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M21.2 3.6 18 19.1c-.2 1.1-.9 1.4-1.8.9l-4.9-3.6-2.4 2.3c-.3.3-.5.5-1 .5l.4-5 9-8.1c.4-.4-.1-.6-.6-.2L5.6 12.8.8 11.3c-1-.3-1-1 .2-1.5L19.8 2.6c.9-.3 1.6.2 1.4 1Z" fill="currentColor"/></svg>}
 
 export async function AppShell({children}:{children:React.ReactNode}){
-  const {profile}=await getViewer();const admin=profile?.role==="admin";
+  const {user,profile}=await getViewer();const admin=profile?.role==="admin";
   return <div className="app-shell">
     <header className="app-header"><div className="header-inner">
       <Link className="brand" href="/biblioteca"><span className="brand-mark">K</span><span className="brand-copy">KINDLE <b>BOOK</b></span></Link>
       <nav className="desktop-nav"><Link href="/biblioteca">Biblioteca</Link><Link href="/kindle">Enviar ao Kindle</Link><Link href="/ajuda">Ajuda</Link>{admin&&<Link href="/admin">Admin</Link>}</nav>
       <form className="header-search" action="/biblioteca" method="get"><Icon name="search"/><input name="q" placeholder="Busque por título ou autor" aria-label="Pesquisar livros"/><button type="submit">Buscar</button></form>
       <Link className="header-icon-link" href="/ajuda" aria-label="Precisa de ajuda?" title="Precisa de ajuda?"><Icon name="help"/></Link>
-      {admin&&<div className="user-pill"><span>{profile?.full_name||profile?.email}</span><SignOutButton/></div>}
+      {user?<div className="user-pill"><span>{profile?.full_name||profile?.email||user.email||"Minha conta"}</span><SignOutButton/></div>:<Link className="btn ghost" style={{padding:"9px 14px",whiteSpace:"nowrap"}} href="/login">Entrar</Link>}
     </div></header>
     {children}
     <a href="https://t.me/kindlebookadm" target="_blank" rel="noreferrer" aria-label="Falar com @kindlebookadm no Telegram" title="@kindlebookadm" style={{position:"fixed",right:20,bottom:84,zIndex:70,width:56,height:56,borderRadius:"50%",display:"grid",placeItems:"center",background:"#229ED9",color:"#fff",boxShadow:"0 12px 28px rgba(0,0,0,.2)"}}><TelegramIcon/></a>
