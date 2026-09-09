@@ -11,7 +11,6 @@ function has(hay:string,terms:string[]){
   });
 }
 
-// Assuntos vindos de bases bibliográficas são sinais fortes e podem ser mais amplos.
 const SUBJECT_RULES:Array<[string,string[]]>=[
   ["Romance",["romance","romantic","love stories","enemies to lovers","friends to lovers"]],
   ["Mistério e Suspense",["mystery","misterio","suspense","thriller","detective","detetive","crime fiction"]],
@@ -45,8 +44,6 @@ const SUBJECT_RULES:Array<[string,string[]]>=[
   ["Literatura Brasileira",["brazilian literature","brazilian fiction","literatura brasileira"]]
 ];
 
-// No título usamos apenas sinais fortes para evitar falsos positivos como
-// “Crônicas de Duna” = contos, “corações” = orações ou “vampiro” = terror.
 const TITLE_RULES:Array<[string,string[]]>=[
   ["Romance",["romantic","romantica","romantico","dark romance","mafia romance","sports romance","sport romance","romance paranormal","romance de epoca","romance historico","rom-com","romcom"]],
   ["Mistério e Suspense",["thriller","suspense","detective","detetive","misterio"]],
@@ -79,33 +76,54 @@ const TITLE_RULES:Array<[string,string[]]>=[
   ["Literatura Brasileira",["literatura brasileira","brazilian literature","brazilian fiction"]]
 ];
 
+const CONDITIONAL_SUBCATEGORY_RULES:Array<{parent:string;child:string;terms:string[]}>= [
+  {parent:"Romance",child:"Dark Romance",terms:["dark romance"]},
+  {parent:"Romance",child:"Comédia Romântica",terms:["romantic comedy","comedia romantica","rom-com","romcom"]},
+  {parent:"Romance",child:"Romance Esportivo",terms:["sports romance","sport romance","hockey romance"]},
+  {parent:"Fantasia",child:"Romantasia",terms:["romantasy"]},
+  {parent:"Fantasia",child:"Fantasia Sombria",terms:["dark fantasy","fantasia sombria"]},
+  {parent:"Mistério e Suspense",child:"Thriller Psicológico",terms:["psychological thriller","thriller psicologico"]},
+  {parent:"Mistério e Suspense",child:"Policial e Detetive",terms:["detective","detetive","serial killer"]},
+  {parent:"Terror",child:"Vampiros",terms:["vampire","vampiro"]}
+];
+
 const FICTION_CHILDREN=new Set([
   "Romance","Mistério e Suspense","Terror","Fantasia","Ficção Científica e Distopia",
   "Ação e Aventura","Drama","Contos e Crônicas"
 ]);
 
-// Só categorias inequivocamente de não ficção puxam automaticamente o guarda-chuva Fatos Reais.
 const NONFICTION_CHILDREN=new Set([
   "Autoajuda e Desenvolvimento Pessoal","Biografias e Memórias","História e Sociedade",
   "Negócios e Finanças","Psicologia e Comportamento","Saúde e Bem-estar","Ciência e Tecnologia",
-  "Educação e Referência","Crime Real","Filosofia","Política e Direito","Culinária e Gastronomia"
+  "Educação e Referência","Crime Real","Arte e Cultura","Filosofia","Política e Direito",
+  "Culinária e Gastronomia","Esportes","Viagem e Turismo"
 ]);
 
-export function guessCategoryIds(categories:Category[],subjects:string[]=[],title="",_description=""){
+export function withCategoryParents(categories:Category[],ids:string[]){
+  const byId=new Map(categories.map(category=>[category.id,category]));
+  const result=new Set(ids);
+  for(const id of [...result]){
+    let current=byId.get(id);
+    const seen=new Set<string>();
+    while(current?.parent_id&&!seen.has(current.parent_id)){
+      seen.add(current.parent_id);
+      result.add(current.parent_id);
+      current=byId.get(current.parent_id);
+    }
+  }
+  return [...result];
+}
+
+export function guessCategoryIds(categories:Category[],subjects:string[]=[],title="",description=""){
   const subjectHay=norm(subjects.join(" | "));
   const titleHay=norm(title);
+  const detailHay=norm(`${title} | ${description}`);
   const names=new Set<string>();
 
-  for(const [category,terms] of SUBJECT_RULES){
-    if(has(subjectHay,terms.map(norm)))names.add(category);
-  }
-  for(const [category,terms] of TITLE_RULES){
-    if(has(titleHay,terms.map(norm)))names.add(category);
-  }
+  for(const [category,terms] of SUBJECT_RULES)if(has(subjectHay,terms.map(norm)))names.add(category);
+  for(const [category,terms] of TITLE_RULES)if(has(titleHay,terms.map(norm)))names.add(category);
 
-  if(names.has("Religião e Espiritualidade")&&/(biblia de vendas|sales bible)/i.test(titleHay)){
-    names.delete("Religião e Espiritualidade");
-  }
+  if(names.has("Religião e Espiritualidade")&&/(biblia de vendas|sales bible)/i.test(titleHay))names.delete("Religião e Espiritualidade");
 
   if(has(subjectHay,["fiction","ficcao","novel"]))names.add("Ficção");
   if(has(subjectHay,["nonfiction","non-fiction","nao ficcao"]))names.add("Fatos Reais");
@@ -121,7 +139,12 @@ export function guessCategoryIds(categories:Category[],subjects:string[]=[],titl
   if([...names].some(name=>FICTION_CHILDREN.has(name)))names.add("Ficção");
   if([...names].some(name=>NONFICTION_CHILDREN.has(name)))names.add("Fatos Reais");
 
-  return categories.filter(category=>names.has(category.name)).map(category=>category.id);
+  for(const rule of CONDITIONAL_SUBCATEGORY_RULES){
+    if(names.has(rule.parent)&&has(detailHay,rule.terms.map(norm)))names.add(rule.child);
+  }
+
+  const matched=categories.filter(category=>names.has(category.name)).map(category=>category.id);
+  return withCategoryParents(categories,matched);
 }
 
 export function guessCategoryId(categories:Category[],subjects:string[]=[],title="",description=""){

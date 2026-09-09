@@ -2,17 +2,17 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { AppShell } from "@/components/AppShell";
 import { KindleShareButton } from "@/components/KindleShareButton";
-import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import type { Book,Category } from "@/lib/types";
 
 export default async function BookPage({params}:{params:Promise<{id:string}>}){
   const {id}=await params;
-  const supabase=await createServerSupabaseClient();
-  const {data:book}=await supabase.from("books").select("*,categories(name),book_categories(category_id,is_primary,categories(id,name,slug))").eq("id",id).eq("published",true).maybeSingle();
+  const db=createAdminSupabaseClient();
+  const {data:book}=await db.from("books").select("*,categories(name),book_categories(category_id,is_primary,categories(id,name,slug,parent_id,sort_order))").eq("id",id).eq("published",true).maybeSingle();
   if(!book)notFound();
   const b=book as Book;
   const linked=((b.book_categories||[]).map(x=>x.categories).filter(Boolean) as Category[]);
-  const uniqueCategories=[...new Map(linked.map(c=>[c.id,c])).values()];
+  const uniqueCategories=[...new Map(linked.map(c=>[c.id,c])).values()].sort((a,b)=>(a.parent_id?1:0)-(b.parent_id?1:0)||(a.sort_order??100)-(b.sort_order??100)||a.name.localeCompare(b.name,"pt-BR"));
   if(!uniqueCategories.length&&b.categories?.name)uniqueCategories.push({id:b.category_id||"primary",name:b.categories.name,slug:""});
   return <AppShell><main className="shell-width detail-page"><Link className="back-link" href="/biblioteca">← Voltar ao acervo</Link><section className="detail">
     <div className="detail-cover-col">{b.cover_url?<img className="cover" src={b.cover_url} alt={`Capa de ${b.title}`}/>:<div className="cover-fallback">{b.title}</div>}<div className="detail-small-meta">{uniqueCategories.map(c=>c.slug?<Link key={c.id} href={`/biblioteca?category=${encodeURIComponent(c.slug)}`}>{c.name}</Link>:<span key={c.id}>{c.name}</span>)}{b.language&&<span>{b.language.toUpperCase()}</span>}</div></div>

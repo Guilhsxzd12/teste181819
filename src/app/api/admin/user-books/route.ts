@@ -2,7 +2,7 @@ import { NextRequest,NextResponse } from "next/server";
 import { getApiViewer } from "@/lib/auth";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { hasOriginalEpub,hasPdfAndEpub } from "@/lib/book-formats";
-import { guessCategoryIds } from "@/lib/category-match";
+import { guessCategoryIds,withCategoryParents } from "@/lib/category-match";
 import { deleteDriveFile } from "@/lib/google-drive";
 import { driveLetter,slugifyTitle } from "@/lib/slugify";
 import type { Category } from "@/lib/types";
@@ -29,17 +29,18 @@ export async function PATCH(request:NextRequest){
     if(!String(item.cover_url||"").trim())return NextResponse.json({error:"Adicione uma capa antes de aprovar este livro."},{status:400});
     if(!String(item.author||"").trim()||!String(item.description||"").trim())return NextResponse.json({error:"Autor e sinopse são obrigatórios antes de aprovar para o catálogo."},{status:400});
 
-    const {data:categoryRows}=await admin.from("categories").select("id,name,slug").order("name");
+    const {data:categoryRows}=await admin.from("categories").select("id,name,slug,parent_id,sort_order").order("sort_order").order("name");
     const categories=(categoryRows||[]) as Category[];const guessed=guessCategoryIds(categories,[],item.title,item.description||"");
-    const categoryIds=[...new Set([item.category_id,...guessed].filter(Boolean) as string[])];const primaryCategoryId=item.category_id||categoryIds[0]||null;
+    const manualIds=item.category_id?withCategoryParents(categories,[item.category_id]):[];
+    const categoryIds=Array.from(new Set<string>([...manualIds,...guessed]));const primaryCategoryId=item.category_id||guessed[0]||null;
     const bookPayload={title:item.title,author:item.author,description:item.description,language:item.language||null,category_id:primaryCategoryId,year:item.year||null,pages:item.pages||null,cover_url:item.cover_url||null,drive_file_id:item.drive_file_id,drive_folder_letter:driveLetter(item.title),file_name:item.file_name,mime_type:"application/epub+zip",reading_pdf_drive_file_id:item.reading_pdf_drive_file_id,reading_pdf_file_name:item.reading_pdf_file_name,reading_pdf_generated_at:item.reading_pdf_generated_at||new Date().toISOString(),kindle_drive_file_id:item.kindle_drive_file_id||null,kindle_file_name:item.kindle_file_name||null,kindle_generated_at:item.kindle_generated_at||null,allow_download:true,published:true,updated_at:new Date().toISOString()};
     const {data:existing}=await admin.from("books").select("id").eq("drive_file_id",item.drive_file_id).maybeSingle();let catalogBookId:string;
     if(existing){const {error:bookError}=await admin.from("books").update(bookPayload).eq("id",existing.id);if(bookError)return NextResponse.json({error:bookError.message},{status:400});catalogBookId=existing.id;}
     else{const slug=`${slugifyTitle(item.title).toLowerCase()}-${String(item.id).slice(0,8)}`;const {data:created,error:bookError}=await admin.from("books").insert({...bookPayload,slug}).select("id").single();if(bookError||!created)return NextResponse.json({error:bookError?.message||"Não foi possível publicar o livro."},{status:400});catalogBookId=created.id;}
 
-    await admin.from("book_categories").delete().eq("book_id",catalogBookId).eq("source","auto");
+    await admin.from("book_categories").delete().eq("book_id",catalogBookId).in("source",["auto","auto-parent","auto-subcategory"]);
     if(categoryIds.length){
-      const links=categoryIds.map(categoryId=>({book_id:catalogBookId,category_id:categoryId,is_primary:categoryId===primaryCategoryId,source:categoryId===item.category_id?"manual":"auto",confidence:categoryId===item.category_id?100:92}));
+      const links=categoryIds.map(categoryId=>({book_id:catalogBookId,category_id:categoryId,is_primary:categoryId===primaryCategoryId,source:categoryId===item.category_id?"manual":manualIds.includes(categoryId)?"auto-parent":"auto",confidence:categoryId===item.category_id?100:manualIds.includes(categoryId)?95:92}));
       const {error:linkError}=await admin.from("book_categories").upsert(links,{onConflict:"book_id,category_id"});if(linkError)return NextResponse.json({error:linkError.message},{status:400});
       await admin.from("book_categories").update({is_primary:false}).eq("book_id",catalogBookId).neq("category_id",primaryCategoryId||"00000000-0000-0000-0000-000000000000");
       if(primaryCategoryId)await admin.from("book_categories").update({is_primary:true}).eq("book_id",catalogBookId).eq("category_id",primaryCategoryId);
