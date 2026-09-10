@@ -1,6 +1,7 @@
 import "server-only";
 import JSZip from "jszip";
 import { getDocument } from "pdfjs-serverless";
+import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 
 export type IdentifiedBook={
   title:string;
@@ -19,6 +20,8 @@ function decodeXml(value:string){
 }
 function stripTags(value?:string|null){return value?decodeXml(value.replace(/<[^>]+>/g," "))||null:null;}
 function compact(value:string){return value.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g,"");}
+function knowledgeNorm(value:string){return value.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim();}
+function weakAuthor(value?:string|null){const v=knowledgeNorm(value||"");return !v||["unknown","desconhecido","desconocido","autor nao informado","autor nao identificado","admin","administrador","camscanner","windows user"].includes(v);}
 function yearFrom(value?:string|null){const m=value?.match(/\b(1[5-9]\d{2}|20\d{2}|21\d{2})\b/);return m?Number(m[1]):null;}
 function normalizeLanguage(value?:string|null){if(!value)return null;const v=value.trim().toLowerCase().replace(/_/g,"-");if(v.startsWith("pt")||v==="por")return "pt";if(v.startsWith("en")||v==="eng")return "en";if(v.startsWith("es")||v==="spa")return "es";return v.split("-")[0]||null;}
 
@@ -33,6 +36,18 @@ function levenshtein(a:string,b:string){
   return prev[b.length];
 }
 function titleSimilarity(a:string,b:string){const x=compact(a),y=compact(b);if(!x||!y)return 0;if(x===y)return 1;const longest=Math.max(x.length,y.length);let score=1-levenshtein(x,y)/longest;if(x.includes(y)||y.includes(x))score=Math.max(score,Math.min(x.length,y.length)/longest+.18);return Math.max(0,Math.min(1,score));}
+
+async function knowledgeBest(title:string,author:string){
+  try{
+    const db=createAdminSupabaseClient();const normalized=knowledgeNorm(title);if(!normalized)return null;
+    const {data}=await db.from("book_knowledge").select("id,title,author,description,year,pages,language,confidence,times_used").eq("normalized_title",normalized).order("confidence",{ascending:false}).limit(8);
+    let best:any=null;let bestScore=0;
+    for(const item of data||[]){const titleScore=titleSimilarity(String(item.title||""),title);const authorScore=weakAuthor(author)?1:titleSimilarity(String(item.author||""),author);const score=titleScore*.78+authorScore*.22;if(score>bestScore){best=item;bestScore=score;}}
+    if(!best||bestScore<.82)return null;
+    void db.from("book_knowledge").update({times_used:Number(best.times_used||0)+1,last_used_at:new Date().toISOString()}).eq("id",best.id);
+    return best as LookupBook;
+  }catch{return null;}
+}
 
 function filenameGuess(fileName:string){
   let stem=fileName.replace(/\.(pdf|epub)$/i,"").replace(/[\[\{][^\]\}]*[\]\}]/g," ").replace(/\((?:[^)]*(?:z-lib|\.org|\.com|ebook|epub|pdf)[^)]*)\)/gi," ");
@@ -87,7 +102,13 @@ async function lookupBest(title:string,rawFileName:string){
 export async function identifyBookFromUpload(fileName:string,mimeType:string,bytes:Uint8Array):Promise<IdentifiedBook>{
   const guess=filenameGuess(fileName);const isEpub=mimeType==="application/epub+zip"||fileName.toLowerCase().endsWith(".epub");const embedded=isEpub?await epubMetadata(bytes):await pdfMetadata(bytes);
   let title=embedded?.title?.trim()||guess.title;let author=embedded?.author?.trim()||guess.author;let description=embedded?.description||null;let year=embedded?.year||null;let pages=embedded?.pages||null;let language=embedded?.language||null;let confidence:IdentifiedBook["confidence"]=embedded?.title?"metadata":"filename";
-  const lookup=await lookupBest(title,fileName);
-  if(lookup){const found=lookup.item;if(!embedded?.title||lookup.score>=.78){title=found.title||title;confidence="lookup";}if((!author||author==="Autor não informado")&&found.author)author=found.author;if(!description&&found.description)description=found.description;if(!year&&found.year)year=found.year;if(!pages&&found.pages)pages=found.pages;if(!language&&found.language)language=found.language;}
+
+  const known=await knowledgeBest(title,author);
+  if(known){
+    title=known.title||title;if(weakAuthor(author)&&known.author)author=known.author;if(!description&&known.description)description=known.description;if(!year&&known.year)year=known.year;if(!pages&&known.pages)pages=known.pages;if(!language&&known.language)language=known.language;confidence="catalog";
+  }else{
+    const lookup=await lookupBest(title,fileName);
+    if(lookup){const found=lookup.item;if(!embedded?.title||lookup.score>=.78){title=found.title||title;confidence="lookup";}if(weakAuthor(author)&&found.author)author=found.author;if(!description&&found.description)description=found.description;if(!year&&found.year)year=found.year;if(!pages&&found.pages)pages=found.pages;if(!language&&found.language)language=found.language;}
+  }
   return {title:title||"Livro enviado pelo Telegram",author:author||"Autor não informado",description,year,pages,language,confidence};
 }
