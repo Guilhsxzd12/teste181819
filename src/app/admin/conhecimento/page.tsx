@@ -20,8 +20,8 @@ export default async function KnowledgePage(){
   const [knowledgeCount,linkedCount,pendingCount,manualCount,{data:recent},{data:runs}]=await Promise.all([
     admin.from("book_knowledge").select("id",{count:"exact",head:true}),
     admin.from("books").select("id",{count:"exact",head:true}).not("knowledge_id","is",null),
-    admin.from("books").select("id",{count:"exact",head:true).eq("published",true).or("metadata_reviewed.is.null,metadata_reviewed.eq.false").lt("knowledge_attempts",5),
-    admin.from("books").select("id",{count:"exact",head:true).eq("knowledge_status","manual"),
+    admin.from("books").select("id",{count:"exact",head:true}).eq("published",true).or("metadata_reviewed.is.null,metadata_reviewed.eq.false").lt("knowledge_attempts",5),
+    admin.from("books").select("id",{count:"exact",head:true}).eq("knowledge_status","manual"),
     admin.from("book_knowledge").select("id,title,author,description,cover_url,language,year,pages,source,confidence,times_used,updated_at").order("updated_at",{ascending:false}).limit(24),
     admin.from("knowledge_runs").select("id,started_at,finished_at,selected_count,matched_count,completed_count,error_count,status,note").order("id",{ascending:false}).limit(8)
   ]);
